@@ -58,9 +58,14 @@ int flesh_flag = 1;
 #define NEEDLE_LENGTH CLOCK_R / 1.2f
 #define FACE_W CLOCK_R * 2 + 1
 #define FACE_H CLOCK_R * 2 + 1
-#define ANGLE_START -180
-#define ANGLE_END 60
-int needle_speed = 0;
+#define ANGLE_START -180.0f
+#define ANGLE_END 60.0f
+#define RPM_MIN_STEP 0
+#define RPM_MAX_STEP 500
+#define RPM_MIN 0
+#define RPM_MAX 10000
+int rpm_iteration_step = 0;
+int rpm = 0;
 int angle = -180;
 short direction = 1;
 
@@ -121,23 +126,24 @@ void loop() {
   readEncoder();
 
   if (direction == 1) {
-    angle += needle_speed;
+    rpm += rpm_iteration_step;
   } else {
-    angle -= needle_speed;
+    rpm -= rpm_iteration_step;
   }
 
-  if (angle <= ANGLE_START) {
-    angle = ANGLE_START;
+  if (rpm <= RPM_MIN) {
+    rpm = RPM_MIN;
     direction = 1;
-  } else if (angle >= ANGLE_END) {
-    angle = ANGLE_END;
+  } else if (rpm >= RPM_MAX) {
+    rpm = RPM_MAX;
     direction = 0;
   }
 
-  draw(angle);
+  draw(rpm);
 }
 
-void draw(int angle) {
+void draw(int rpm) {
+  angle = map(rpm, RPM_MIN, RPM_MAX, ANGLE_START, ANGLE_END);
   plot_gauge(angle);
   gfx->draw16bitBeRGBBitmap(0, 0, (uint16_t *)gauge_background.getPointer(), 480, 480);
 }
@@ -146,11 +152,12 @@ void plot_gauge(int angle) {
 
   gauge_background.pushImage(0, 0, 480, 480, background);
   gauge_background.setTextColor(YELLOW, TFT_TRANSPARENT);
-  gauge_background.drawString(String(needle_speed), CLOCK_R, CLOCK_R * 0.75);
+  gauge_background.drawString(String(rpm_iteration_step), CLOCK_R, CLOCK_R * 0.75);
+  int angle_int = (int) trunc((angle));
   if (angle < 0) {
-    gauge_background.drawWideLine(CLOCK_R, CLOCK_R, needle_end_x[360 + angle], needle_end_y[360 + angle], 6.0f, BLUE);
+    gauge_background.drawWideLine(CLOCK_R, CLOCK_R, needle_end_x[360 + angle_int], needle_end_y[360 + angle_int], 6.0f, BLUE);
   } else {
-    gauge_background.drawWideLine(CLOCK_R, CLOCK_R, needle_end_x[angle], needle_end_y[angle], 6.0f, BLUE);
+    gauge_background.drawWideLine(CLOCK_R, CLOCK_R, needle_end_x[angle_int], needle_end_y[angle_int], 6.0f, BLUE);
   }
 }
 
@@ -177,15 +184,15 @@ void readEncoder() {
   {
       if (digitalRead(ENCODER_DT) == State)
       {
-          needle_speed++;
-          if (needle_speed > 20)
-              needle_speed = 20;
+          rpm_iteration_step+=5;
+          if (rpm_iteration_step > RPM_MAX_STEP)
+              rpm_iteration_step = RPM_MAX_STEP;
       }
       else
       {
-          needle_speed--;
-          if (needle_speed < 1)
-              needle_speed = 0;
+          rpm_iteration_step-=5;
+          if (rpm_iteration_step < RPM_MIN_STEP)
+              rpm_iteration_step = RPM_MIN_STEP;
       }
   }
   old_State = State; // the first position was changed
