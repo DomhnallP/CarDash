@@ -87,7 +87,7 @@ TFT_eSprite gauge_background = TFT_eSprite(&tft);
 void setup() {
 
   pin_init();
-  
+
 
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
@@ -153,7 +153,7 @@ void plot_gauge(int angle) {
   gauge_background.pushImage(0, 0, 480, 480, background);
   gauge_background.setTextColor(YELLOW, TFT_TRANSPARENT);
   gauge_background.drawString(String(rpm_iteration_step), CLOCK_R, CLOCK_R * 0.75);
-  int angle_int = (int) trunc((angle));
+  int angle_int = (int)trunc((angle));
   if (angle < 0) {
     gauge_background.drawWideLine(CLOCK_R, CLOCK_R, needle_end_x[360 + angle_int], needle_end_y[360 + angle_int], 6.0f, BLUE);
   } else {
@@ -180,27 +180,22 @@ void calculate_index_coords(int16_t r, int16_t len, float a, int i) {
 void readEncoder() {
 
   State = digitalRead(ENCODER_CLK);
-  if (State != old_State)
-  {
-      if (digitalRead(ENCODER_DT) == State)
-      {
-          rpm_iteration_step+=5;
-          if (rpm_iteration_step > RPM_MAX_STEP)
-              rpm_iteration_step = RPM_MAX_STEP;
-      }
-      else
-      {
-          rpm_iteration_step-=5;
-          if (rpm_iteration_step < RPM_MIN_STEP)
-              rpm_iteration_step = RPM_MIN_STEP;
-      }
+  if (State != old_State) {
+    if (digitalRead(ENCODER_DT) == State) {
+      rpm_iteration_step += 5;
+      if (rpm_iteration_step > RPM_MAX_STEP)
+        rpm_iteration_step = RPM_MAX_STEP;
+    } else {
+      rpm_iteration_step -= 5;
+      if (rpm_iteration_step < RPM_MIN_STEP)
+        rpm_iteration_step = RPM_MIN_STEP;
+    }
   }
-  old_State = State; // the first position was changed
+  old_State = State;  // the first position was changed
   move_flag = 1;
 }
 
-void pin_init()
-{
+void pin_init() {
   pinMode(ENCODER_CLK, INPUT_PULLUP);
   pinMode(ENCODER_DT, INPUT_PULLUP);
   pinMode(IO_PWM_PIN, OUTPUT);
