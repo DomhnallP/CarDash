@@ -64,6 +64,8 @@ int flesh_flag = 1;
 #define RPM_MAX_STEP 500
 #define RPM_MIN 0
 #define RPM_MAX 10000
+#define RPM_TRUNC_END 4000
+#define ANGLE_TRUNC_END -120.0f
 int rpm_iteration_step = 0;
 int rpm = 0;
 int angle = -180;
@@ -143,16 +145,25 @@ void loop() {
 }
 
 void draw(int rpm) {
-  angle = map(rpm, RPM_MIN, RPM_MAX, ANGLE_START, ANGLE_END);
+  //allows for the non linear nature of some tachometers. i.e. lfa indices go 0,2,4,5,6,7,8,9,10
+  angle = compute_angle(rpm);
   plot_gauge(angle);
   gfx->draw16bitBeRGBBitmap(0, 0, (uint16_t *)gauge_background.getPointer(), 480, 480);
 }
 
+int compute_angle(int rpm){
+
+    if (rpm < RPM_TRUNC_END) {
+    return map(rpm, RPM_MIN, RPM_TRUNC_END, ANGLE_START, ANGLE_TRUNC_END);
+  } else {
+    return map(rpm, RPM_TRUNC_END, RPM_MAX, ANGLE_TRUNC_END, ANGLE_END);
+  }
+}
 void plot_gauge(int angle) {
 
   gauge_background.pushImage(0, 0, 480, 480, background);
   gauge_background.setTextColor(YELLOW, TFT_TRANSPARENT);
-  gauge_background.drawString(String(rpm_iteration_step), CLOCK_R, CLOCK_R * 0.75);
+  gauge_background.drawString(String(rpm), CLOCK_R, CLOCK_R * 0.75);
   int angle_int = (int)trunc((angle));
   if (angle < 0) {
     gauge_background.drawWideLine(CLOCK_R, CLOCK_R, needle_end_x[360 + angle_int], needle_end_y[360 + angle_int], 6.0f, BLUE);
