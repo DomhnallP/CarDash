@@ -45,6 +45,7 @@ RotaryEncoder encoder(PIN_IN1, PIN_IN2, RotaryEncoder::LatchMode::TWO03);
 #define blue 0x10d8
 #define yellow 0x9381
 #define bck TFT_BLACK
+#define wht TFT_WHITE
 
 //----------Define Dial and Needle Variables----------
 
@@ -70,10 +71,8 @@ float indices_outer_x[360];  //outer points of Speed gauges
 float indices_outer_y[360];
 
 
-
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite gauge_background = TFT_eSprite(&tft);
-
 
 void setup() {
   pinMode(IO_PWM_PIN, OUTPUT);
@@ -83,8 +82,6 @@ void setup() {
   ledcWrite(PWM_CHANNEL, 840);
 
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-
-
 
   for (int i = 0; i < 360; i++) {
     //precalculate needle positions
@@ -105,7 +102,6 @@ void setup() {
       indices_outer_y[i] = 0.0;
     }
   }
-
 
   //init gauge
   gauge_background.setColorDepth(16);
@@ -144,30 +140,8 @@ void draw(int angle) {
 }
 
 void plot_gauge(int angle) {
-  gauge_background.fillCircle(240, 240, 250, WHITE);
-  gauge_background.drawArc(240, 240, 241, 126, 210, 240, RED, TFT_TRANSPARENT, 1);
-  gauge_background.fillSmoothCircle(240, 240, 127, BLACK, WHITE);
 
-  for (int i = ANGLE_START; i <= ANGLE_END; i += 3) {
-    if (i < 0) {
-      gauge_background.drawWideLine(indices_inner_x[360 + i],
-                                    indices_inner_y[360 + i],
-                                    indices_outer_x[360 + i],
-                                    indices_outer_y[360 + i],
-                                    2.0f,
-                                    BLACK);
-    } else {
-      gauge_background.drawWideLine(indices_inner_x[i],
-                                    indices_inner_y[i],
-                                    indices_outer_x[i],
-                                    indices_outer_y[i],
-                                    2.0f,
-                                    BLACK);
-    }
-  }
-
-  // gauge_background.pushImage(0, 0, 480, 480, background);
-
+  gauge_background.pushImage(0, 0, 480, 480, background);
   gauge_background.setTextColor(YELLOW, TFT_TRANSPARENT);
   gauge_background.drawString(String(needle_speed), CLOCK_R, CLOCK_R * 0.75);
   if (angle < 0) {
