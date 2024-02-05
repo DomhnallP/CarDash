@@ -33,12 +33,17 @@ Arduino_ST7701_RGBPanel *gfx = new Arduino_ST7701_RGBPanel(
 #define TOUCH_RST -1  // 38
 #define TOUCH_IRQ -1  // 0
 
-#define PIN_IN1 13
-#define PIN_IN2 10
+#define ENCODER_CLK 13
+#define ENCODER_DT 10
 #define BUTTON 14
 
-//----------Initialise Rotary Encoder----------
-RotaryEncoder encoder(PIN_IN1, PIN_IN2, RotaryEncoder::LatchMode::TWO03);
+//----------Initialise Rotary Encoder and Push Button variables----------
+
+int State;
+int old_State;
+int move_flag = 0;
+int button_flag = 0;
+int flesh_flag = 1;
 
 //----------Define Color Variables----------
 #define red 0xE8E4
@@ -75,11 +80,9 @@ TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite gauge_background = TFT_eSprite(&tft);
 
 void setup() {
-  pinMode(IO_PWM_PIN, OUTPUT);
-  pinMode(BUTTON, INPUT_PULLUP);
-  ledcSetup(PWM_CHANNEL, PWM_FREQ, pwm_resolution_bits);
-  ledcAttachPin(IO_PWM_PIN, PWM_CHANNEL);
-  ledcWrite(PWM_CHANNEL, 840);
+
+  pin_init();
+  
 
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
@@ -168,23 +171,37 @@ void calculate_index_coords(int16_t r, int16_t len, float a, int i) {
 
 //TODO - add encoder logic in future - what do with it? ¯\_(ツ)_/¯
 void readEncoder() {
-  static int pos = 0;
-  encoder.tick();
 
-  int newPos = encoder.getPosition();
-  USBSerial.println(newPos);
-  if (pos != newPos) {
-
-    if (newPos > pos)
-      needle_speed++;
-    if (newPos < pos)
-      needle_speed--;
-
-    pos = newPos;
+  State = digitalRead(ENCODER_CLK);
+  if (State != old_State)
+  {
+      if (digitalRead(ENCODER_DT) == State)
+      {
+          needle_speed++;
+          if (needle_speed > 20)
+              needle_speed = 20;
+      }
+      else
+      {
+          needle_speed--;
+          if (needle_speed < 1)
+              needle_speed = 0;
+      }
   }
-  if (needle_speed < 0)
-    needle_speed = 0;
+  old_State = State; // the first position was changed
+  move_flag = 1;
+}
 
-  if (needle_speed >= 10)
-    needle_speed = 10;
+void pin_init()
+{
+  pinMode(ENCODER_CLK, INPUT_PULLUP);
+  pinMode(ENCODER_DT, INPUT_PULLUP);
+  pinMode(IO_PWM_PIN, OUTPUT);
+  pinMode(BUTTON, INPUT_PULLUP);
+  ledcSetup(PWM_CHANNEL, PWM_FREQ, pwm_resolution_bits);
+  ledcAttachPin(IO_PWM_PIN, PWM_CHANNEL);
+  ledcWrite(PWM_CHANNEL, 840);
+  old_State = digitalRead(ENCODER_CLK);
+
+  attachInterrupt(ENCODER_CLK, readEncoder, CHANGE);
 }
