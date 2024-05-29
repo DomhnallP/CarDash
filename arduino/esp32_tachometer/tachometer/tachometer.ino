@@ -6,21 +6,57 @@
 #include "background.h"
 
 //----------Define Display Drivers----------
-Arduino_ESP32RGBPanel *bus = new Arduino_ESP32RGBPanel(
-  1 /* CS */, 46 /* SCK */, 0 /* SDA */,
-  2 /* DE */, 42 /* VSYNC */, 3 /* HSYNC */, 45 /* PCLK */,
-  11 /* R0 */, 15 /* R1 */, 12 /* R2 */, 16 /* R3 */, 21 /* R4 */,
-  39 /* G0/P22 */, 7 /* G1/P23 */, 47 /* G2/P24 */, 8 /* G3/P25 */, 48 /* G4/P26 */, 9 /* G5 */,
-  4 /* B0 */, 41 /* B1 */, 5 /* B2 */, 40 /* B3 */, 6 /* B4 */
-);
+#define DISPLAY_DC GFX_NOT_DEFINED
+#define DISPLAY_CS 1
+#define DISPLAY_SCK 46
+#define DISPLAY_MOSI 0
+#define DISPLAY_MISO GFX_NOT_DEFINED
 
-Arduino_ST7701_RGBPanel *gfx = new Arduino_ST7701_RGBPanel(
-  bus, GFX_NOT_DEFINED /* RST */, 0 /* rotation */,
-  false /* IPS */, 480 /* width */, 480 /* height */,
-  st7701_type5_init_operations, sizeof(st7701_type5_init_operations),
-  true /* BGR */,
-  10 /* hsync_front_porch */, 8 /* hsync_pulse_width */, 50 /* hsync_back_porch */,
-  10 /* vsync_front_porch */, 8 /* vsync_pulse_width */, 20 /* vsync_back_porch */);
+#define DISPLAY_DE 2
+#define DISPLAY_VSYNC 42
+#define DISPLAY_HSYNC 3
+#define DISPLAY_PCLK 45
+#define DISPLAY_R0 11
+#define DISPLAY_R1 15
+#define DISPLAY_R2 12
+#define DISPLAY_R3 16
+#define DISPLAY_R4 21
+#define DISPLAY_G0 39
+#define DISPLAY_G1 7
+#define DISPLAY_G2 47
+#define DISPLAY_G3 8
+#define DISPLAY_G4 48
+#define DISPLAY_G5 9
+#define DISPLAY_B0 4
+#define DISPLAY_B1 41
+#define DISPLAY_B2 5
+#define DISPLAY_B3 40
+#define DISPLAY_B4 6
+#define DISPLAY_HSYNC_POL 1
+#define DISPLAY_VSYNC_POL 1
+#define DISPLAY_HSYNC_FRONT_PORCH 10
+#define DISPLAY_VSYNC_FRONT_PORCH 10
+#define DISPLAY_HSYNC_BACK_PORCH 50
+#define DISPLAY_VSYNC_BACK_PORCH 20
+#define DISPLAY_HSYNC_PULSE_WIDTH 8
+#define DISPLAY_VSYNC_PULSE_WIDTH 8
+
+Arduino_DataBus *bus = new Arduino_HWSPI(
+    DISPLAY_DC /* DC */, DISPLAY_CS /* CS */,
+    DISPLAY_SCK /* SCK */, DISPLAY_MOSI /* MOSI */, DISPLAY_MISO /* MISO */);
+
+
+Arduino_ESP32RGBPanel *rgbpanel = new Arduino_ESP32RGBPanel(
+    DISPLAY_DE, DISPLAY_VSYNC , DISPLAY_HSYNC, DISPLAY_PCLK,
+    DISPLAY_B0, DISPLAY_B1, DISPLAY_B2, DISPLAY_B3, DISPLAY_B4,
+    DISPLAY_G0, DISPLAY_G1, DISPLAY_G2, DISPLAY_G3, DISPLAY_G4, DISPLAY_G5,
+    DISPLAY_R0, DISPLAY_R1, DISPLAY_R2, DISPLAY_R3, DISPLAY_R4,
+    DISPLAY_HSYNC_POL, DISPLAY_HSYNC_FRONT_PORCH, DISPLAY_HSYNC_PULSE_WIDTH, DISPLAY_VSYNC_BACK_PORCH,
+    DISPLAY_VSYNC_POL, DISPLAY_VSYNC_FRONT_PORCH, DISPLAY_VSYNC_PULSE_WIDTH, DISPLAY_VSYNC_BACK_PORCH);
+
+Arduino_RGB_Display *gfx = new Arduino_RGB_Display(
+    480 /* width */, 480 /* height */, rgbpanel, 0 /* rotation */, true /* auto_flush */,
+    bus, GFX_NOT_DEFINED /* RST */, st7701_type5_init_operations, sizeof(st7701_type5_init_operations));
 
 //---------Define I/O Pins----------
 #define PWM_CHANNEL 1
@@ -44,11 +80,13 @@ int old_State;
 int move_flag = 0;
 int button_flag = 0;
 int flesh_flag = 1;
+long previousMillis = 0;
+bool shift_light_flash_state = true;
 
 //----------Define Color Variables----------
 #define red 0xE8E4
 #define blue 0x10d8
-#define yellow 0x9381
+#define yellow 0xFFE0
 #define bck TFT_BLACK
 #define wht TFT_WHITE
 
@@ -58,9 +96,23 @@ int flesh_flag = 1;
 #define NEEDLE_LENGTH CLOCK_R / 1.2f
 #define FACE_W CLOCK_R * 2 + 1
 #define FACE_H CLOCK_R * 2 + 1
-#define ANGLE_START -180
-#define ANGLE_END 60
-int needle_speed = 0;
+#define ANGLE_START -180.0f
+#define ANGLE_END 60.0f
+#define RPM_MIN_STEP 0
+#define RPM_MAX_STEP 500
+#define RPM_MIN 0
+#define RPM_MAX 10000
+#define RPM_TRUNC_END 4000
+#define ANGLE_TRUNC_END -120.0f
+#define SHIFT_LIGHT_YELLOW 75.0f
+#define SHIFT_LIGHT_RED 90.0f
+#define SHIFT_LIGHT_FLASH 95.0f
+#define SHIFT_LIGHT_MAX_THICKNESS 30
+#define SHIFT_LIGHT_FLASH_INTERVAL 150
+
+
+int rpm_iteration_step = 0;
+int rpm = 8500;
 int angle = -180;
 short direction = 1;
 
@@ -82,7 +134,7 @@ TFT_eSprite gauge_background = TFT_eSprite(&tft);
 void setup() {
 
   pin_init();
-  
+
 
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
@@ -121,36 +173,63 @@ void loop() {
   readEncoder();
 
   if (direction == 1) {
-    angle += needle_speed;
+    rpm += rpm_iteration_step;
   } else {
-    angle -= needle_speed;
+    rpm -= rpm_iteration_step;
   }
 
-  if (angle <= ANGLE_START) {
-    angle = ANGLE_START;
+  if (rpm <= RPM_MIN) {
+    rpm = RPM_MIN;
     direction = 1;
-  } else if (angle >= ANGLE_END) {
-    angle = ANGLE_END;
+  } else if (rpm >= RPM_MAX) {
+    rpm = RPM_MAX;
     direction = 0;
   }
 
-  draw(angle);
+  draw(rpm);
 }
 
-void draw(int angle) {
-  plot_gauge(angle);
+void draw(int rpm) {
+  //allows for the non linear nature of some tachometers. i.e. lfa indices go 0,2,4,5,6,7,8,9,10
+  angle = compute_angle(rpm);
+  plot_gauge(angle, rpm);
   gfx->draw16bitBeRGBBitmap(0, 0, (uint16_t *)gauge_background.getPointer(), 480, 480);
 }
 
-void plot_gauge(int angle) {
+int compute_angle(int rpm){
+
+    if (rpm < RPM_TRUNC_END) {
+    return map(rpm, RPM_MIN, RPM_TRUNC_END, ANGLE_START, ANGLE_TRUNC_END);
+  } else {
+    return map(rpm, RPM_TRUNC_END, RPM_MAX, ANGLE_TRUNC_END, ANGLE_END);
+  }
+}
+
+void plot_gauge(int angle, int rpm) {
 
   gauge_background.pushImage(0, 0, 480, 480, background);
   gauge_background.setTextColor(YELLOW, TFT_TRANSPARENT);
-  gauge_background.drawString(String(needle_speed), CLOCK_R, CLOCK_R * 0.75);
+  float rpm_percentage = ((float) rpm / (float) RPM_MAX) * 100.0f;
+
+  //TODO - refactor this into it's own function (drawing shift light)
+  if(rpm_percentage >= SHIFT_LIGHT_YELLOW) {
+    if(rpm_percentage <= SHIFT_LIGHT_FLASH || shift_light_flash_state ){
+      gauge_background.drawSmoothArc(CLOCK_R, CLOCK_R+1, 143, 0, 0, 360, (rpm_percentage <= SHIFT_LIGHT_RED ? yellow : red), wht, false);
+      gauge_background.drawSmoothArc(CLOCK_R, CLOCK_R+1, (rpm_percentage <= SHIFT_LIGHT_RED ? map(rpm_percentage, SHIFT_LIGHT_YELLOW, SHIFT_LIGHT_RED, 143, 110) : 110), 0, 0, 360, bck, (rpm_percentage <= SHIFT_LIGHT_RED ? yellow : red), false);
+    }
+  }
+  unsigned long currentMillis = millis();
+  if(currentMillis - previousMillis >= SHIFT_LIGHT_FLASH_INTERVAL){
+    shift_light_flash_state = !shift_light_flash_state;
+    previousMillis = currentMillis;
+  }
+
+  //TODO - refactor this into it's own function (drawing the needle)
+  int angle_int = (int)trunc((angle));
   if (angle < 0) {
-    gauge_background.drawWideLine(CLOCK_R, CLOCK_R, needle_end_x[360 + angle], needle_end_y[360 + angle], 6.0f, BLUE);
+    gauge_background.drawWideLine(CLOCK_R, CLOCK_R, needle_end_x[360 + angle_int], needle_end_y[360 + angle_int], 6.0f, BLUE);
   } else {
-    gauge_background.drawWideLine(CLOCK_R, CLOCK_R, needle_end_x[angle], needle_end_y[angle], 6.0f, BLUE);
+    gauge_background.drawWideLine(CLOCK_R, CLOCK_R, needle_end_x[angle_int], needle_end_y[angle_int], 6.0f, BLUE);
   }
 }
 
@@ -173,27 +252,22 @@ void calculate_index_coords(int16_t r, int16_t len, float a, int i) {
 void readEncoder() {
 
   State = digitalRead(ENCODER_CLK);
-  if (State != old_State)
-  {
-      if (digitalRead(ENCODER_DT) == State)
-      {
-          needle_speed++;
-          if (needle_speed > 20)
-              needle_speed = 20;
-      }
-      else
-      {
-          needle_speed--;
-          if (needle_speed < 1)
-              needle_speed = 0;
-      }
+  if (State != old_State) {
+    if (digitalRead(ENCODER_DT) == State) {
+      rpm_iteration_step += 5;
+      if (rpm_iteration_step > RPM_MAX_STEP)
+        rpm_iteration_step = RPM_MAX_STEP;
+    } else {
+      rpm_iteration_step -= 5;
+      if (rpm_iteration_step < RPM_MIN_STEP)
+        rpm_iteration_step = RPM_MIN_STEP;
+    }
   }
-  old_State = State; // the first position was changed
+  old_State = State;  // the first position was changed
   move_flag = 1;
 }
 
-void pin_init()
-{
+void pin_init() {
   pinMode(ENCODER_CLK, INPUT_PULLUP);
   pinMode(ENCODER_DT, INPUT_PULLUP);
   pinMode(IO_PWM_PIN, OUTPUT);
