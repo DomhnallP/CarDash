@@ -4,6 +4,7 @@
 #include <TFT_eSPI.h>
 #include "touch.h"
 #include "background.h"
+#include "precalc.h"
 
 //----------Define Display Drivers----------
 #define DISPLAY_DC GFX_NOT_DEFINED
@@ -41,7 +42,7 @@
 #define DISPLAY_HSYNC_PULSE_WIDTH 8
 #define DISPLAY_VSYNC_PULSE_WIDTH 8
 
-Arduino_DataBus *bus = new Arduino_HWSPI(
+Arduino_DataBus *bus = new Arduino_SWSPI(
     DISPLAY_DC /* DC */, DISPLAY_CS /* CS */,
     DISPLAY_SCK /* SCK */, DISPLAY_MOSI /* MOSI */, DISPLAY_MISO /* MISO */);
 
@@ -115,9 +116,11 @@ int rpm_iteration_step = 0;
 int rpm = 8500;
 int angle = -180;
 short direction = 1;
+int fps = 0;
+unsigned long millis_time;       // fps
+unsigned long millis_time_last;  // fps
 
 //used to precalculate end positions for the needle
-float xp = 0.0f, yp = 0.0f;
 float needle_end_x[360];  //outer points of Speed gauges
 float needle_end_y[360];
 
@@ -133,30 +136,10 @@ TFT_eSprite gauge_background = TFT_eSprite(&tft);
 
 void setup() {
 
+  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
   pin_init();
 
-
-  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-
-  for (int i = 0; i < 360; i++) {
-    //precalculate needle positions
-    calculate_needle_coords(CLOCK_R, CLOCK_R, &xp, &yp, NEEDLE_LENGTH, i);
-    needle_end_x[i] = xp;
-    needle_end_y[i] = yp;
-
-    if (i % 30 == 0) {
-      calculate_index_coords(210, 30, i, i);
-    } else if (i % 15 == 0) {
-      calculate_index_coords(220, 20, i, i);
-    } else if (i % 3 == 0) {
-      calculate_index_coords(225, 10, i, i);
-    } else {
-      indices_inner_x[i] = 0.0;  //outer points of Speed gauges
-      indices_inner_y[i] = 0.0;
-      indices_outer_x[i] = 0.0;  //outer points of Speed gauges
-      indices_outer_y[i] = 0.0;
-    }
-  }
+  precalculate_indices(indices_inner_x, indices_inner_y, indices_outer_x, indices_outer_y, needle_end_x, needle_end_y, CLOCK_R, NEEDLE_LENGTH);
 
   //init gauge
   gauge_background.setColorDepth(16);
@@ -172,6 +155,66 @@ void loop() {
 
   readEncoder();
 
+  simulate_rpm();
+
+  draw(rpm);
+  calculate_fps();
+}
+
+
+void draw(int rpm) {
+  //allows for the non linear nature of some tachometers. i.e. lfa indices go 0,2,4,5,6,7,8,9,10
+  angle = compute_angle(rpm);
+  draw_gauge(angle, rpm);
+  gfx->draw16bitBeRGBBitmap(0, 0, (uint16_t *)gauge_background.getPointer(), 480, 480);
+}
+
+
+void draw_gauge(int angle, int rpm) {
+
+  gauge_background.pushImage(0, 0, 480, 480, background);
+  gauge_background.setTextColor(YELLOW, TFT_TRANSPARENT);
+
+  render_shift_light();
+  render_fps();
+  render_tacho_needle();
+}
+
+
+void render_shift_light(){
+  float rpm_percentage = ((float) rpm / (float) RPM_MAX) * 100.0f;
+  if(rpm_percentage >= SHIFT_LIGHT_YELLOW) {
+    if(rpm_percentage <= SHIFT_LIGHT_FLASH || shift_light_flash_state ){
+      gauge_background.drawSmoothArc(CLOCK_R, CLOCK_R+1, 143, 0, 0, 360, (rpm_percentage <= SHIFT_LIGHT_RED ? yellow : red), wht, false);
+      gauge_background.drawSmoothArc(CLOCK_R, CLOCK_R+1, (rpm_percentage <= SHIFT_LIGHT_RED ? map(rpm_percentage, SHIFT_LIGHT_YELLOW, SHIFT_LIGHT_RED, 143, 110) : 110), 0, 0, 360, bck, (rpm_percentage <= SHIFT_LIGHT_RED ? yellow : red), false);
+    }
+  }
+  unsigned long currentMillis = millis();
+  if(currentMillis - previousMillis >= SHIFT_LIGHT_FLASH_INTERVAL){
+    shift_light_flash_state = !shift_light_flash_state;
+    previousMillis = currentMillis;
+  }
+}
+
+
+void render_tacho_needle(){
+  int angle_int = (int)trunc((angle));
+  if (angle < 0) {
+    gauge_background.drawWideLine(CLOCK_R, CLOCK_R, needle_end_x[360 + angle_int], needle_end_y[360 + angle_int], 6.0f, BLUE);
+  } else {
+    gauge_background.drawWideLine(CLOCK_R, CLOCK_R, needle_end_x[angle_int], needle_end_y[angle_int], 6.0f, BLUE);
+  }
+}
+
+
+void render_fps(){
+  gauge_background.drawString(String(fps), CLOCK_R, CLOCK_R * 0.75);
+}
+
+
+//----------Util Functions, I'll refactor these eventually :D ----------
+
+void simulate_rpm(){
   if (direction == 1) {
     rpm += rpm_iteration_step;
   } else {
@@ -185,16 +228,8 @@ void loop() {
     rpm = RPM_MAX;
     direction = 0;
   }
-
-  draw(rpm);
 }
 
-void draw(int rpm) {
-  //allows for the non linear nature of some tachometers. i.e. lfa indices go 0,2,4,5,6,7,8,9,10
-  angle = compute_angle(rpm);
-  plot_gauge(angle, rpm);
-  gfx->draw16bitBeRGBBitmap(0, 0, (uint16_t *)gauge_background.getPointer(), 480, 480);
-}
 
 int compute_angle(int rpm){
 
@@ -205,48 +240,13 @@ int compute_angle(int rpm){
   }
 }
 
-void plot_gauge(int angle, int rpm) {
 
-  gauge_background.pushImage(0, 0, 480, 480, background);
-  gauge_background.setTextColor(YELLOW, TFT_TRANSPARENT);
-  float rpm_percentage = ((float) rpm / (float) RPM_MAX) * 100.0f;
-
-  //TODO - refactor this into it's own function (drawing shift light)
-  if(rpm_percentage >= SHIFT_LIGHT_YELLOW) {
-    if(rpm_percentage <= SHIFT_LIGHT_FLASH || shift_light_flash_state ){
-      gauge_background.drawSmoothArc(CLOCK_R, CLOCK_R+1, 143, 0, 0, 360, (rpm_percentage <= SHIFT_LIGHT_RED ? yellow : red), wht, false);
-      gauge_background.drawSmoothArc(CLOCK_R, CLOCK_R+1, (rpm_percentage <= SHIFT_LIGHT_RED ? map(rpm_percentage, SHIFT_LIGHT_YELLOW, SHIFT_LIGHT_RED, 143, 110) : 110), 0, 0, 360, bck, (rpm_percentage <= SHIFT_LIGHT_RED ? yellow : red), false);
-    }
-  }
-  unsigned long currentMillis = millis();
-  if(currentMillis - previousMillis >= SHIFT_LIGHT_FLASH_INTERVAL){
-    shift_light_flash_state = !shift_light_flash_state;
-    previousMillis = currentMillis;
-  }
-
-  //TODO - refactor this into it's own function (drawing the needle)
-  int angle_int = (int)trunc((angle));
-  if (angle < 0) {
-    gauge_background.drawWideLine(CLOCK_R, CLOCK_R, needle_end_x[360 + angle_int], needle_end_y[360 + angle_int], 6.0f, BLUE);
-  } else {
-    gauge_background.drawWideLine(CLOCK_R, CLOCK_R, needle_end_x[angle_int], needle_end_y[angle_int], 6.0f, BLUE);
-  }
+void calculate_fps(){
+  millis_time_last = millis_time;                                  // store last millisecond value
+  millis_time = millis();                                          // get millisecond value from the start of the program
+  fps = round(1000.0/ (millis_time*1.0-millis_time_last));
 }
 
-#define DEG2RAD 0.0174532925
-void calculate_needle_coords(int16_t x, int16_t y, float *xp, float *yp, int16_t r, float a) {
-  float sx1 = cos((a - 90) * DEG2RAD);
-  float sy1 = sin((a - 90) * DEG2RAD);
-  *xp = sx1 * r + x;
-  *yp = sy1 * r + y;
-}
-
-void calculate_index_coords(int16_t r, int16_t len, float a, int i) {
-  indices_inner_x[i] = r * cos(DEG2RAD * (a - 90)) + CLOCK_R;
-  indices_inner_y[i] = r * sin(DEG2RAD * (a - 90)) + CLOCK_R;
-  indices_outer_x[i] = (r + len) * cos(DEG2RAD * (a - 90)) + CLOCK_R;  //outer points of Speed gauges
-  indices_outer_y[i] = (r + len) * sin(DEG2RAD * (a - 90)) + CLOCK_R;
-}
 
 //TODO - add encoder logic in future - what do with it? ¯\_(ツ)_/¯
 void readEncoder() {
